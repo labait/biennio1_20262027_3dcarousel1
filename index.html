@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dischi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+    <style>
+      html,
+      body {
+        background: #e4e0d8;
+      }
+      #view {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body class="overflow-x-hidden bg-[#e4e0d8] text-[#1c1b19] antialiased">
+    <main id="stage" class="relative h-screen w-full">
+      <canvas id="view" class="absolute inset-0" aria-label="Carosello di dischi"></canvas>
+
+      <div class="pointer-events-none absolute left-6 top-6 z-10 md:left-12 md:top-12">
+        <p class="text-[11px] uppercase tracking-[0.32em] text-neutral-500">Collezione</p>
+        <h1 id="disc-title" class="mt-3 font-serif text-4xl leading-none tracking-tight md:text-6xl"></h1>
+        <div id="disc-rule" class="mt-5 h-px w-14 bg-neutral-800"></div>
+      </div>
+
+      <p class="pointer-events-none absolute bottom-6 left-6 z-10 text-[11px] uppercase tracking-[0.32em] text-neutral-500 md:left-12">
+        Scorri
+      </p>
+    </main>
+
+    <footer class="px-6 py-20 text-sm text-neutral-500 md:px-12">
+      Lo scroll sposta la fila. Il cursore inclina il disco, in senso opposto, intorno al suo centro.
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js"></script>
+    <script type="module">
+      import * as THREE from "three";
+      import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+
+      const discs = [
+        { title: "Bruma", color: "#1b1d21" },
+        { title: "Laguna", color: "#1d3c38" },
+        { title: "Corallo", color: "#9a3a3a" },
+        { title: "Paglia", color: "#c6b48a" },
+        { title: "Vetro blu", color: "#243056" },
+        { title: "Osso", color: "#ddd6ca" },
+        { title: "Rame", color: "#7a4530" },
+        { title: "Ulivo", color: "#3c4630" },
+      ];
+
+      const BG = 0xe4e0d8;
+      const RADIUS = 1;
+      const HOLE = 0.17;
+      const STEP = new THREE.Vector3(1.7, 0.46, -0.42);
+      const BASE_EULER = new THREE.Euler(-0.64, 0.42, -0.2, "XYZ");
+      const MAX_YAW = 0.32;
+      const MAX_PITCH = 0.26;
+      const LEAD = 1.2;
+
+      const { gsap, ScrollTrigger } = window;
+      gsap.registerPlugin(ScrollTrigger);
+
+      const canvas = document.querySelector("#view");
+      const titleEl = document.querySelector("#disc-title");
+      const ruleEl = document.querySelector("#disc-rule");
+      const stage = document.querySelector("#stage");
+
+      const renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        alpha: false,
+        powerPreference: "high-performance",
+      });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setClearColor(BG, 1);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.08;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 80);
+      camera.position.set(0.55, 1.45, 6.7);
+      camera.lookAt(0.1, 0.02, 0);
+
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.045).texture;
+      scene.environmentIntensity = 0.72;
+      pmrem.dispose();
+
+      const hemi = new THREE.HemisphereLight(0xfff8f0, 0xc8c0b4, 0.55);
+      scene.add(hemi);
+
+      const key = new THREE.DirectionalLight(0xfff3e6, 2.6);
+      key.position.set(-4.8, 7.2, 6.2);
+      key.castShadow = true;
+      key.shadow.mapSize.set(2048, 2048);
+      key.shadow.camera.near = 0.5;
+      key.shadow.camera.far = 32;
+      key.shadow.camera.left = -10;
+      key.shadow.camera.right = 10;
+      key.shadow.camera.top = 10;
+      key.shadow.camera.bottom = -10;
+      key.shadow.bias = -0.0004;
+      key.shadow.normalBias = 0.03;
+      key.shadow.radius = 3;
+      scene.add(key);
+      scene.add(key.target);
+
+      const rim = new THREE.DirectionalLight(0xd5def0, 1.15);
+      rim.position.set(6.5, 2.4, -3.2);
+      scene.add(rim);
+
+      const fill = new THREE.DirectionalLight(0xfff6ee, 0.45);
+      fill.position.set(1.5, -2.5, 5.5);
+      scene.add(fill);
+
+      const glint = new THREE.PointLight(0xfffaf4, 36, 20, 2);
+      glint.position.set(-2.4, 2.8, 4.4);
+      scene.add(glint);
+
+      const shadowMaterial = new THREE.MeshBasicMaterial({
+        map: createShadowTexture(),
+        transparent: true,
+        depthWrite: false,
+        toneMapped: false,
+      });
+      const shadowGeometry = new THREE.PlaneGeometry(2.7, 2.7);
+
+      const silver = new THREE.MeshPhysicalMaterial({
+        color: 0xe7ebf0,
+        metalness: 1,
+        roughness: 0.24,
+        clearcoat: 0.4,
+        clearcoatRoughness: 0.28,
+        envMapIntensity: 1.25,
+      });
+
+      const discGeometry = createDiscGeometry();
+      discGeometry.computeBoundingBox();
+      const frontZ = discGeometry.boundingBox.max.z;
+
+      const hubGeometry = new THREE.TorusGeometry(0.215, 0.032, 18, 72);
+      const pickerGeometry = new THREE.CircleGeometry(RADIUS, 48);
+      const pickerMaterial = new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: false,
+      });
+
+      const row = new THREE.Group();
+      scene.add(row);
+
+      const pickers = [];
+      const slots = discs.map((item, index) => {
+        const slot = new THREE.Group();
+        slot.position.copy(STEP).multiplyScalar(index);
+
+        const catcher = new THREE.Mesh(shadowGeometry, shadowMaterial);
+        catcher.position.set(0.18, -0.22, -0.58);
+        catcher.renderOrder = -1;
+        slot.add(catcher);
+
+        const tilt = new THREE.Group();
+        tilt.quaternion.setFromEuler(BASE_EULER);
+        slot.add(tilt);
+
+        const body = new THREE.Group();
+        tilt.add(body);
+
+        const face = new THREE.MeshPhysicalMaterial({
+          map: createLabelTexture(item.title, item.color),
+          metalness: 0.05,
+          roughness: 0.38,
+          clearcoat: 1,
+          clearcoatRoughness: 0.16,
+          envMapIntensity: 0.48,
+        });
+
+        const mesh = new THREE.Mesh(discGeometry, [face, silver]);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        body.add(mesh);
+
+        const hub = new THREE.Mesh(hubGeometry, silver);
+        hub.position.z = frontZ + 0.004;
+        hub.castShadow = true;
+        body.add(hub);
+
+        const picker = new THREE.Mesh(pickerGeometry, pickerMaterial);
+        picker.position.z = frontZ + 0.03;
+        picker.userData.tilt = tilt;
+        body.add(picker);
+        pickers.push(picker);
+
+        tilt.userData.pitch = 0;
+        tilt.userData.yaw = 0;
+        tilt.userData.lift = 0;
+        tilt.userData.scale = 1;
+        tilt.userData.index = index;
+        tilt.userData.body = body;
+
+        row.add(slot);
+        return tilt;
+      });
+
+      const baseQuat = new THREE.Quaternion().setFromEuler(BASE_EULER);
+      const raycaster = new THREE.Raycaster();
+      const pointer = { x: 0, y: 0, ndcX: 0, ndcY: 0, inside: false };
+      const pointerNdc = new THREE.Vector2();
+      const center = new THREE.Vector3();
+      const ndc = new THREE.Vector3();
+      const axisX = new THREE.Vector3(1, 0, 0);
+      const axisY = new THREE.Vector3(0, 1, 0);
+      const qYaw = new THREE.Quaternion();
+      const qPitch = new THREE.Quaternion();
+      const clock = new THREE.Clock();
+
+      let progress = 0;
+      let hovered = null;
+      let activeIndex = -1;
+
+      const scrollTrigger = ScrollTrigger.create({
+        trigger: stage,
+        start: "top top",
+        end: "+=460%",
+        pin: true,
+        scrub: 0.7,
+        anticipatePin: 1,
+        onUpdate: (self) => {
+          progress = self.progress;
+        },
+      });
+      progress = scrollTrigger.progress;
+
+      canvas.addEventListener("pointermove", (event) => {
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = event.clientX - rect.left;
+        pointer.y = event.clientY - rect.top;
+        pointer.ndcX = (pointer.x / rect.width) * 2 - 1;
+        pointer.ndcY = -((pointer.y / rect.height) * 2 - 1);
+        pointer.inside = true;
+      });
+      canvas.addEventListener("pointerleave", () => {
+        pointer.inside = false;
+      });
+
+      const resizeObserver = new ResizeObserver(resize);
+      resizeObserver.observe(stage);
+      resize();
+      renderer.setAnimationLoop(frame);
+      window.__carousel = {
+        get hovered() {
+          return hovered ? hovered.userData.index : null;
+        },
+        angles() {
+          return slots.map((tilt) => ({
+            i: tilt.userData.index,
+            yaw: Number(tilt.userData.yaw.toFixed(3)),
+            pitch: Number(tilt.userData.pitch.toFixed(3)),
+          }));
+        },
+      };
+
+      function frame() {
+        const dt = Math.min(clock.getDelta(), 0.05);
+        const travel = LEAD + progress * (discs.length - 1);
+        row.position.copy(STEP).multiplyScalar(-travel);
+
+        key.position.set(row.position.x - 4.8, row.position.y + 7.2, 6.2);
+        key.target.position.set(row.position.x, row.position.y, 0);
+        key.target.updateMatrixWorld();
+
+        hovered = null;
+        if (pointer.inside) {
+          pointerNdc.set(pointer.ndcX, pointer.ndcY);
+          raycaster.setFromCamera(pointerNdc, camera);
+          const hits = raycaster.intersectObjects(pickers, false);
+          hovered = hits[0]?.object.userData.tilt ?? null;
+        }
+
+        for (const tilt of slots) {
+          const along = tilt.userData.index - travel;
+          const focus = Math.exp(-along * along * 1.6);
+          let targetYaw = 0;
+          let targetPitch = 0;
+
+          if (tilt === hovered) {
+            tilt.getWorldPosition(center);
+            const radiusPx = screenRadius(center, tilt.scale.x);
+            ndc.copy(center).project(camera);
+            const sx = (ndc.x * 0.5 + 0.5) * canvas.clientWidth;
+            const sy = (-ndc.y * 0.5 + 0.5) * canvas.clientHeight;
+            const dx = THREE.MathUtils.clamp((pointer.x - sx) / radiusPx, -1, 1);
+            const dy = THREE.MathUtils.clamp((pointer.y - sy) / radiusPx, -1, 1);
+            targetYaw = dx * MAX_YAW;
+            targetPitch = dy * MAX_PITCH;
+          }
+
+          tilt.userData.yaw = THREE.MathUtils.damp(tilt.userData.yaw, targetYaw, 7, dt);
+          tilt.userData.pitch = THREE.MathUtils.damp(tilt.userData.pitch, targetPitch, 7, dt);
+          qYaw.setFromAxisAngle(axisY, tilt.userData.yaw);
+          qPitch.setFromAxisAngle(axisX, tilt.userData.pitch);
+          tilt.quaternion.copy(qYaw).multiply(qPitch).multiply(baseQuat);
+
+          const targetLift = (tilt === hovered ? 0.22 : 0) + focus * 0.1;
+          const targetScale = 1 + focus * 0.12 + (tilt === hovered ? 0.04 : 0);
+          tilt.userData.lift = THREE.MathUtils.damp(tilt.userData.lift, targetLift, 7, dt);
+          tilt.userData.scale = THREE.MathUtils.damp(tilt.userData.scale, targetScale, 7, dt);
+          tilt.userData.body.position.z = tilt.userData.lift;
+          tilt.scale.setScalar(tilt.userData.scale);
+        }
+
+        const nearest = Math.round(THREE.MathUtils.clamp(travel, 0, discs.length - 1));
+        if (nearest !== activeIndex) {
+          activeIndex = nearest;
+          const item = discs[nearest];
+          titleEl.textContent = item.title;
+          ruleEl.style.backgroundColor = luminance(item.color) > 0.72 ? "#2a2825" : item.color;
+        }
+
+        canvas.style.cursor = hovered ? "pointer" : "default";
+        renderer.render(scene, camera);
+      }
+
+      function screenRadius(worldPoint, scale) {
+        const dist = camera.position.distanceTo(worldPoint);
+        const fov = THREE.MathUtils.degToRad(camera.fov);
+        const worldPerPx = (2 * Math.tan(fov / 2) * dist) / canvas.clientHeight;
+        return (RADIUS * 0.92 * scale) / worldPerPx;
+      }
+
+      function resize() {
+        const width = canvas.clientWidth;
+        const height = canvas.clientHeight;
+        if (width < 2 || height < 2) return;
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height, false);
+      }
+
+      function createShadowTexture() {
+        const size = 256;
+        const shadowCanvas = document.createElement("canvas");
+        shadowCanvas.width = size;
+        shadowCanvas.height = size;
+        const ctx = shadowCanvas.getContext("2d");
+        const gradient = ctx.createRadialGradient(128, 128, 28, 128, 128, 118);
+        gradient.addColorStop(0, "rgba(28,24,20,0.5)");
+        gradient.addColorStop(0.42, "rgba(28,24,20,0.22)");
+        gradient.addColorStop(1, "rgba(28,24,20,0)");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, size, size);
+        const texture = new THREE.CanvasTexture(shadowCanvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        return texture;
+      }
+
+      function createDiscGeometry() {
+        const shape = new THREE.Shape();
+        shape.absarc(0, 0, RADIUS, 0, Math.PI * 2, false);
+        const hole = new THREE.Path();
+        hole.absarc(0, 0, HOLE, 0, Math.PI * 2, true);
+        shape.holes.push(hole);
+
+        const geometry = new THREE.ExtrudeGeometry(shape, {
+          depth: 0.04,
+          bevelEnabled: true,
+          bevelThickness: 0.016,
+          bevelSize: 0.042,
+          bevelOffset: 0,
+          bevelSegments: 5,
+          curveSegments: 80,
+          steps: 1,
+        });
+        geometry.computeBoundingBox();
+        const midZ = (geometry.boundingBox.min.z + geometry.boundingBox.max.z) / 2;
+        geometry.translate(0, 0, -midZ);
+        geometry.computeVertexNormals();
+        return geometry;
+      }
+
+      function createLabelTexture(title, color) {
+        const size = 1024;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        const ink = luminance(color) > 0.62 ? "#1a1917" : "#f6f3ec";
+        const ring = luminance(color) > 0.62 ? "rgba(28,26,23,0.38)" : "rgba(255,255,255,0.55)";
+
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, size, size);
+
+        const wash = ctx.createRadialGradient(size * 0.38, size * 0.32, 30, size * 0.5, size * 0.52, size * 0.68);
+        wash.addColorStop(0, "rgba(255,255,255,0.2)");
+        wash.addColorStop(1, "rgba(0,0,0,0.2)");
+        ctx.fillStyle = wash;
+        ctx.fillRect(0, 0, size, size);
+
+        ctx.strokeStyle = ring;
+        ctx.lineWidth = 3;
+        for (const radius of [470, 438, 390]) {
+          ctx.beginPath();
+          ctx.arc(512, 512, radius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        ctx.lineWidth = 18;
+        ctx.strokeStyle = "rgba(226,230,236,0.92)";
+        ctx.beginPath();
+        ctx.arc(512, 512, 124, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = ink;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = "600 84px 'Avenir Next', Futura, 'Helvetica Neue', sans-serif";
+        drawLines(ctx, title.toUpperCase(), 512, 348, 500, 86);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.repeat.set(0.5, 0.5);
+        texture.offset.set(0.5, 0.5);
+        return texture;
+      }
+
+      function drawLines(ctx, text, x, y, maxWidth, lineHeight) {
+        const words = text.split(" ");
+        const lines = [];
+        let current = "";
+        for (const word of words) {
+          const trial = current ? `${current} ${word}` : word;
+          if (ctx.measureText(trial).width > maxWidth && current) {
+            lines.push(current);
+            current = word;
+          } else {
+            current = trial;
+          }
+        }
+        if (current) lines.push(current);
+        const start = y - ((lines.length - 1) * lineHeight) / 2;
+        lines.forEach((line, i) => ctx.fillText(line, x, start + i * lineHeight));
+      }
+
+      function luminance(hex) {
+        const value = hex.replace("#", "");
+        const r = parseInt(value.slice(0, 2), 16) / 255;
+        const g = parseInt(value.slice(2, 4), 16) / 255;
+        const b = parseInt(value.slice(4, 6), 16) / 255;
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      }
+    </script>
+  </body>
+</html>
