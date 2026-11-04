@@ -79,7 +79,7 @@
 
       <aside
         id="debug"
-        class="absolute right-4 top-4 z-20 w-52 rounded-md border border-[#1c1b19]/10 bg-[#f4f1ea]/95 p-3.5 text-[11px] text-[#1c1b19] shadow-[0_10px_40px_rgba(28,27,25,0.06)] backdrop-blur-sm md:right-8 md:top-8"
+        class="absolute right-4 top-4 z-20 hidden w-52 rounded-md border border-[#1c1b19]/10 bg-[#f4f1ea]/95 p-3.5 text-[11px] text-[#1c1b19] shadow-[0_10px_40px_rgba(28,27,25,0.06)] backdrop-blur-sm md:right-8 md:top-8"
       >
         <p class="uppercase tracking-[0.28em] text-neutral-500">Debug</p>
 
@@ -119,6 +119,26 @@
               step="0.01"
               value="1"
               aria-label="Dimensione dei dischi"
+            />
+          </span>
+        </label>
+
+        <label class="mt-3 block">
+          <span class="flex items-baseline justify-between gap-3">
+            <span class="uppercase tracking-[0.18em] text-neutral-600">Spessore</span>
+            <span id="out-thickness" class="tabular-nums">0.50</span>
+          </span>
+          <span class="relative mt-1.5 block">
+            <span class="pointer-events-none absolute left-1/2 top-1/2 z-0 h-2.5 w-px -translate-x-1/2 -translate-y-1/2 bg-neutral-400/90"></span>
+            <input
+              id="ctl-thickness"
+              class="debug-range relative z-10"
+              type="range"
+              min="0.08"
+              max="0.92"
+              step="0.01"
+              value="0.5"
+              aria-label="Spessore dei dischi"
             />
           </span>
         </label>
@@ -172,7 +192,8 @@
       const NEAR_DISTANCE = 5.55;
       const FAR_DISTANCE = 8.65;
       const PATH_SAMPLES = 128;
-      const params = { spacing: 1.7, size: 1, curve: 48 };
+      const PATH_LIFT_PX = 50;
+      const params = { spacing: 1.7, size: 1, thickness: 0.5, curve: 48 };
       const BASE_EULER = new THREE.Euler(-0.64, 0.42, -0.2, "XYZ");
       const MAX_YAW = 0.32;
       const MAX_PITCH = 0.26;
@@ -250,19 +271,18 @@
       const shadowGeometry = new THREE.PlaneGeometry(2.7, 2.7);
 
       const silver = new THREE.MeshPhysicalMaterial({
-        color: 0xe7ebf0,
-        metalness: 1,
-        roughness: 0.24,
-        clearcoat: 0.4,
-        clearcoatRoughness: 0.28,
-        envMapIntensity: 1.25,
+        color: 0xd5d0c8,
+        metalness: 0.08,
+        roughness: 0.42,
+        clearcoat: 0.35,
+        clearcoatRoughness: 0.4,
+        envMapIntensity: 0.35,
       });
 
-      const discGeometry = createDiscGeometry();
+      let discGeometry = createDiscGeometry(params.thickness);
       discGeometry.computeBoundingBox();
-      const frontZ = discGeometry.boundingBox.max.z;
+      let frontZ = discGeometry.boundingBox.max.z;
 
-      const hubGeometry = new THREE.TorusGeometry(0.215, 0.032, 18, 72);
       const pickerGeometry = new THREE.CircleGeometry(RADIUS, 48);
       const pickerMaterial = new THREE.MeshBasicMaterial({
         colorWrite: false,
@@ -273,6 +293,7 @@
       scene.add(row);
 
       const pickers = [];
+      const discMeshes = [];
       const slots = discs.map((item, index) => {
         const slot = new THREE.Group();
 
@@ -301,11 +322,7 @@
         mesh.castShadow = true;
         mesh.receiveShadow = true;
         body.add(mesh);
-
-        const hub = new THREE.Mesh(hubGeometry, silver);
-        hub.position.z = frontZ + 0.004;
-        hub.castShadow = true;
-        body.add(hub);
+        discMeshes.push(mesh);
 
         const picker = new THREE.Mesh(pickerGeometry, pickerMaterial);
         picker.position.z = frontZ + 0.03;
@@ -342,6 +359,7 @@
       const pathSamples = [];
       let focusLength = 0;
       let pathTotal = 0;
+      let builtThickness = params.thickness;
 
       let progress = 0;
       let hovered = null;
@@ -476,25 +494,46 @@
       }
 
       function bindDebug() {
+        const panel = document.querySelector("#debug");
+        if (new URLSearchParams(window.location.search).has("debug")) panel.classList.remove("hidden");
+
         const spacing = document.querySelector("#ctl-spacing");
         const size = document.querySelector("#ctl-size");
+        const thickness = document.querySelector("#ctl-thickness");
         const curve = document.querySelector("#ctl-curve");
         const outSpacing = document.querySelector("#out-spacing");
         const outSize = document.querySelector("#out-size");
+        const outThickness = document.querySelector("#out-thickness");
         const outCurve = document.querySelector("#out-curve");
         const sync = () => {
           params.spacing = Number(spacing.value);
           params.size = Number(size.value);
+          params.thickness = Number(thickness.value);
           params.curve = Number(curve.value);
           outSpacing.textContent = params.spacing.toFixed(2);
           outSize.textContent = params.size.toFixed(2);
+          outThickness.textContent = params.thickness.toFixed(2);
           outCurve.textContent = `${Math.round(params.curve)}°`;
+          applyThickness();
           rebuildPath();
         };
         spacing.addEventListener("input", sync);
         size.addEventListener("input", sync);
+        thickness.addEventListener("input", sync);
         curve.addEventListener("input", sync);
         sync();
+      }
+
+      function applyThickness() {
+        if (builtThickness === params.thickness) return;
+        builtThickness = params.thickness;
+        const next = createDiscGeometry(params.thickness);
+        next.computeBoundingBox();
+        frontZ = next.boundingBox.max.z;
+        for (const mesh of discMeshes) mesh.geometry = next;
+        discGeometry.dispose();
+        discGeometry = next;
+        for (const picker of pickers) picker.position.z = frontZ + 0.02;
       }
 
       function rebuildPath() {
@@ -520,10 +559,11 @@
         pathSamples.length = 0;
 
         const push = (ndcX, ndcY, distance) => {
-          const point = place(ndcX, ndcY, forwardDepth(ndcX, ndcY, distance), _placed).clone();
+          const y = ndcY + (PATH_LIFT_PX / Math.max(canvas.clientHeight, 1)) * 2;
+          const point = place(ndcX, y, forwardDepth(ndcX, y, distance), _placed).clone();
           const prev = pathSamples[pathSamples.length - 1];
           const length = prev ? prev.length + point.distanceTo(prev.point) : 0;
-          pathSamples.push({ point, length, ndcX, ndcY, distance });
+          pathSamples.push({ point, length, ndcX, ndcY: y, distance });
         };
 
         if (phi < 0.001) {
@@ -636,7 +676,7 @@
         return texture;
       }
 
-      function createDiscGeometry() {
+      function createDiscGeometry(thickness) {
         const shape = new THREE.Shape();
         shape.absarc(0, 0, RADIUS, 0, Math.PI * 2, false);
         const hole = new THREE.Path();
@@ -644,12 +684,12 @@
         shape.holes.push(hole);
 
         const geometry = new THREE.ExtrudeGeometry(shape, {
-          depth: 0.04,
+          depth: 0.04 * thickness,
           bevelEnabled: true,
-          bevelThickness: 0.016,
-          bevelSize: 0.042,
+          bevelThickness: 0.016 * thickness,
+          bevelSize: 0.006,
           bevelOffset: 0,
-          bevelSegments: 5,
+          bevelSegments: 2,
           curveSegments: 80,
           steps: 1,
         });
@@ -667,30 +707,15 @@
         canvas.height = size;
         const ctx = canvas.getContext("2d", { alpha: false });
         const ink = luminance(color) > 0.62 ? "#1a1917" : "#f6f3ec";
-        const ring = luminance(color) > 0.62 ? "rgba(28,26,23,0.38)" : "rgba(255,255,255,0.55)";
 
         ctx.fillStyle = color;
         ctx.fillRect(0, 0, size, size);
 
         const wash = ctx.createRadialGradient(size * 0.38, size * 0.32, 30, size * 0.5, size * 0.52, size * 0.68);
-        wash.addColorStop(0, "rgba(255,255,255,0.2)");
-        wash.addColorStop(1, "rgba(0,0,0,0.2)");
+        wash.addColorStop(0, "rgba(255,255,255,0.16)");
+        wash.addColorStop(1, "rgba(0,0,0,0.14)");
         ctx.fillStyle = wash;
         ctx.fillRect(0, 0, size, size);
-
-        ctx.strokeStyle = ring;
-        ctx.lineWidth = 3;
-        for (const radius of [470, 438, 390]) {
-          ctx.beginPath();
-          ctx.arc(512, 512, radius, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-
-        ctx.lineWidth = 18;
-        ctx.strokeStyle = "rgba(226,230,236,0.92)";
-        ctx.beginPath();
-        ctx.arc(512, 512, 124, 0, Math.PI * 2);
-        ctx.stroke();
 
         ctx.fillStyle = ink;
         ctx.textAlign = "center";
