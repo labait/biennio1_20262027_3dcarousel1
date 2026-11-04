@@ -23,6 +23,44 @@
         width: 100%;
         height: 100%;
       }
+      .debug-range {
+        -webkit-appearance: none;
+        appearance: none;
+        display: block;
+        width: 100%;
+        height: 16px;
+        margin: 0;
+        background: transparent;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .debug-range:focus {
+        outline: none;
+      }
+      .debug-range::-webkit-slider-runnable-track {
+        height: 1px;
+        background: #1c1b19;
+      }
+      .debug-range::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 11px;
+        height: 11px;
+        margin-top: -5px;
+        border-radius: 999px;
+        background: #1c1b19;
+      }
+      .debug-range::-moz-range-track {
+        height: 1px;
+        background: #1c1b19;
+        border: none;
+      }
+      .debug-range::-moz-range-thumb {
+        width: 11px;
+        height: 11px;
+        border: none;
+        border-radius: 999px;
+        background: #1c1b19;
+      }
     </style>
   </head>
   <body class="overflow-x-hidden bg-[#e4e0d8] text-[#1c1b19] antialiased">
@@ -38,6 +76,73 @@
       <p class="pointer-events-none absolute bottom-6 left-6 z-10 text-[11px] uppercase tracking-[0.32em] text-neutral-500 md:left-12">
         Scorri
       </p>
+
+      <aside
+        id="debug"
+        class="absolute right-4 top-4 z-20 w-52 rounded-md border border-[#1c1b19]/10 bg-[#f4f1ea]/95 p-3.5 text-[11px] text-[#1c1b19] shadow-[0_10px_40px_rgba(28,27,25,0.06)] backdrop-blur-sm md:right-8 md:top-8"
+      >
+        <p class="uppercase tracking-[0.28em] text-neutral-500">Debug</p>
+
+        <label class="mt-3.5 block">
+          <span class="flex items-baseline justify-between gap-3">
+            <span class="uppercase tracking-[0.18em] text-neutral-600">Spaziatura</span>
+            <span id="out-spacing" class="tabular-nums">1.70</span>
+          </span>
+          <span class="relative mt-1.5 block">
+            <span class="pointer-events-none absolute left-1/2 top-1/2 z-0 h-2.5 w-px -translate-x-1/2 -translate-y-1/2 bg-neutral-400/90"></span>
+            <input
+              id="ctl-spacing"
+              class="debug-range relative z-10"
+              type="range"
+              min="0.5"
+              max="2.9"
+              step="0.01"
+              value="1.7"
+              aria-label="Spaziatura tra i dischi"
+            />
+          </span>
+        </label>
+
+        <label class="mt-3 block">
+          <span class="flex items-baseline justify-between gap-3">
+            <span class="uppercase tracking-[0.18em] text-neutral-600">Dimensione</span>
+            <span id="out-size" class="tabular-nums">1.00</span>
+          </span>
+          <span class="relative mt-1.5 block">
+            <span class="pointer-events-none absolute left-1/2 top-1/2 z-0 h-2.5 w-px -translate-x-1/2 -translate-y-1/2 bg-neutral-400/90"></span>
+            <input
+              id="ctl-size"
+              class="debug-range relative z-10"
+              type="range"
+              min="0.55"
+              max="1.45"
+              step="0.01"
+              value="1"
+              aria-label="Dimensione dei dischi"
+            />
+          </span>
+        </label>
+
+        <label class="mt-3 block">
+          <span class="flex items-baseline justify-between gap-3">
+            <span class="uppercase tracking-[0.18em] text-neutral-600">Curvatura</span>
+            <span id="out-curve" class="tabular-nums">48°</span>
+          </span>
+          <span class="relative mt-1.5 block">
+            <span class="pointer-events-none absolute left-1/2 top-1/2 z-0 h-2.5 w-px -translate-x-1/2 -translate-y-1/2 bg-neutral-400/90"></span>
+            <input
+              id="ctl-curve"
+              class="debug-range relative z-10"
+              type="range"
+              min="0"
+              max="96"
+              step="1"
+              value="48"
+              aria-label="Angolo di curvatura del percorso"
+            />
+          </span>
+        </label>
+      </aside>
     </main>
 
     <footer class="px-6 py-20 text-sm text-neutral-500 md:px-12">
@@ -64,11 +169,14 @@
       const BG = 0xe4e0d8;
       const RADIUS = 1;
       const HOLE = 0.17;
-      const STEP = new THREE.Vector3(1.7, 0.46, -0.42);
+      const NEAR_DISTANCE = 5.55;
+      const FAR_DISTANCE = 8.65;
+      const PATH_SAMPLES = 128;
+      const params = { spacing: 1.7, size: 1, curve: 48 };
       const BASE_EULER = new THREE.Euler(-0.64, 0.42, -0.2, "XYZ");
       const MAX_YAW = 0.32;
       const MAX_PITCH = 0.26;
-      const LEAD = 1.2;
+      const LEAD = 3;
 
       const { gsap, ScrollTrigger } = window;
       gsap.registerPlugin(ScrollTrigger);
@@ -167,7 +275,6 @@
       const pickers = [];
       const slots = discs.map((item, index) => {
         const slot = new THREE.Group();
-        slot.position.copy(STEP).multiplyScalar(index);
 
         const catcher = new THREE.Mesh(shadowGeometry, shadowMaterial);
         catcher.position.set(0.18, -0.22, -0.58);
@@ -228,6 +335,13 @@
       const qYaw = new THREE.Quaternion();
       const qPitch = new THREE.Quaternion();
       const clock = new THREE.Clock();
+      const _right = new THREE.Vector3();
+      const _up = new THREE.Vector3();
+      const _fwd = new THREE.Vector3();
+      const _placed = new THREE.Vector3();
+      const pathSamples = [];
+      let focusLength = 0;
+      let pathTotal = 0;
 
       let progress = 0;
       let hovered = null;
@@ -258,6 +372,7 @@
         pointer.inside = false;
       });
 
+      bindDebug();
       const resizeObserver = new ResizeObserver(resize);
       resizeObserver.observe(stage);
       resize();
@@ -266,6 +381,7 @@
         get hovered() {
           return hovered ? hovered.userData.index : null;
         },
+        params,
         angles() {
           return slots.map((tilt) => ({
             i: tilt.userData.index,
@@ -273,16 +389,39 @@
             pitch: Number(tilt.userData.pitch.toFixed(3)),
           }));
         },
+        layout() {
+          return slots.map((tilt) => {
+            tilt.getWorldPosition(center);
+            const distance = camera.position.distanceTo(center);
+            ndc.copy(center).project(camera);
+            return {
+              i: tilt.userData.index,
+              x: Number(ndc.x.toFixed(3)),
+              y: Number(ndc.y.toFixed(3)),
+              distance: Number(distance.toFixed(2)),
+            };
+          });
+        },
       };
 
       function frame() {
         const dt = Math.min(clock.getDelta(), 0.05);
         const travel = LEAD + progress * (discs.length - 1);
-        row.position.copy(STEP).multiplyScalar(-travel);
 
-        key.position.set(row.position.x - 4.8, row.position.y + 7.2, 6.2);
-        key.target.position.set(row.position.x, row.position.y, 0);
-        key.target.updateMatrixWorld();
+        for (const tilt of slots) {
+          const along = tilt.userData.index - travel;
+          const slot = tilt.parent;
+          pointOnPath(along * params.spacing, slot.position);
+          slot.scale.setScalar(params.size);
+        }
+        row.updateMatrixWorld(true);
+
+        if (pathSamples.length) {
+          const focus = pathSamples[PATH_SAMPLES / 2].point;
+          key.position.set(focus.x - 4.8, focus.y + 7.2, focus.z + 6.2);
+          key.target.position.copy(focus);
+          key.target.updateMatrixWorld();
+        }
 
         hovered = null;
         if (pointer.inside) {
@@ -300,7 +439,7 @@
 
           if (tilt === hovered) {
             tilt.getWorldPosition(center);
-            const radiusPx = screenRadius(center, tilt.scale.x);
+            const radiusPx = screenRadius(center, params.size * tilt.scale.x);
             ndc.copy(center).project(camera);
             const sx = (ndc.x * 0.5 + 0.5) * canvas.clientWidth;
             const sy = (-ndc.y * 0.5 + 0.5) * canvas.clientHeight;
@@ -336,6 +475,133 @@
         renderer.render(scene, camera);
       }
 
+      function bindDebug() {
+        const spacing = document.querySelector("#ctl-spacing");
+        const size = document.querySelector("#ctl-size");
+        const curve = document.querySelector("#ctl-curve");
+        const outSpacing = document.querySelector("#out-spacing");
+        const outSize = document.querySelector("#out-size");
+        const outCurve = document.querySelector("#out-curve");
+        const sync = () => {
+          params.spacing = Number(spacing.value);
+          params.size = Number(size.value);
+          params.curve = Number(curve.value);
+          outSpacing.textContent = params.spacing.toFixed(2);
+          outSize.textContent = params.size.toFixed(2);
+          outCurve.textContent = `${Math.round(params.curve)}°`;
+          rebuildPath();
+        };
+        spacing.addEventListener("input", sync);
+        size.addEventListener("input", sync);
+        curve.addEventListener("input", sync);
+        sync();
+      }
+
+      function rebuildPath() {
+        if (!(camera.aspect > 0)) return;
+        camera.updateMatrixWorld();
+        _right.set(1, 0, 0).transformDirection(camera.matrixWorld);
+        _up.set(0, 1, 0).transformDirection(camera.matrixWorld);
+        _fwd.set(0, 0, -1).transformDirection(camera.matrixWorld);
+
+        const ax = -1;
+        const ay = -1;
+        const bx = 1;
+        const by = 1;
+        const chordX = bx - ax;
+        const chordY = by - ay;
+        const chord = Math.hypot(chordX, chordY);
+        const tHatX = chordX / chord;
+        const tHatY = chordY / chord;
+        const nHatX = chordY / chord;
+        const nHatY = -chordX / chord;
+        const phi = THREE.MathUtils.degToRad(Math.max(params.curve, 0));
+        const count = PATH_SAMPLES;
+        pathSamples.length = 0;
+
+        const push = (ndcX, ndcY, distance) => {
+          const point = place(ndcX, ndcY, forwardDepth(ndcX, ndcY, distance), _placed).clone();
+          const prev = pathSamples[pathSamples.length - 1];
+          const length = prev ? prev.length + point.distanceTo(prev.point) : 0;
+          pathSamples.push({ point, length, ndcX, ndcY, distance });
+        };
+
+        if (phi < 0.001) {
+          for (let i = 0; i <= count; i++) {
+            const u = i / count;
+            push(
+              THREE.MathUtils.lerp(ax, bx, u),
+              THREE.MathUtils.lerp(ay, by, u),
+              THREE.MathUtils.lerp(NEAR_DISTANCE, FAR_DISTANCE, u),
+            );
+          }
+        } else {
+          const alpha = phi / 2;
+          const radius = chord / 2 / Math.sin(alpha);
+          const om = radius * Math.cos(alpha);
+          const ox = -nHatX * om;
+          const oy = -nHatY * om;
+          for (let i = 0; i <= count; i++) {
+            const u = i / count;
+            const beta = THREE.MathUtils.lerp(-alpha, alpha, u);
+            const ndcX = ox + radius * (Math.cos(beta) * nHatX + Math.sin(beta) * tHatX);
+            const ndcY = oy + radius * (Math.cos(beta) * nHatY + Math.sin(beta) * tHatY);
+            push(ndcX, ndcY, THREE.MathUtils.lerp(NEAR_DISTANCE, FAR_DISTANCE, u));
+          }
+        }
+
+        focusLength = pathSamples[count / 2].length;
+        pathTotal = pathSamples[count].length;
+      }
+
+      function forwardDepth(ndcX, ndcY, distance) {
+        const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5);
+        const radial = Math.hypot(ndcX * camera.aspect, ndcY) * tan;
+        return distance / Math.sqrt(1 + radial * radial);
+      }
+
+      function place(ndcX, ndcY, depth, target) {
+        const halfH = Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * depth;
+        const halfW = halfH * camera.aspect;
+        return target
+          .copy(camera.position)
+          .addScaledVector(_fwd, depth)
+          .addScaledVector(_right, ndcX * halfW)
+          .addScaledVector(_up, ndcY * halfH);
+      }
+
+      function pointOnPath(distance, target) {
+        const last = pathSamples.length - 1;
+        if (last < 1) return target.set(0, 0, 0);
+        const probe = focusLength + distance;
+        if (probe <= 0) return extendPath(0, 1, -probe, target);
+        if (probe >= pathTotal) return extendPath(last, last - 1, probe - pathTotal, target);
+
+        let lo = 0;
+        let hi = last;
+        while (lo + 1 < hi) {
+          const mid = (lo + hi) >> 1;
+          if (pathSamples[mid].length < probe) lo = mid;
+          else hi = mid;
+        }
+        const a = pathSamples[lo];
+        const b = pathSamples[hi];
+        const span = b.length - a.length;
+        const f = span > 1e-6 ? (probe - a.length) / span : 0;
+        return target.copy(a.point).lerp(b.point, f);
+      }
+
+      function extendPath(from, toward, extra, target) {
+        const a = pathSamples[from];
+        const b = pathSamples[toward];
+        const seg = Math.abs(a.length - b.length) || 1;
+        const f = extra / seg;
+        const ndcX = a.ndcX + (a.ndcX - b.ndcX) * f;
+        const ndcY = a.ndcY + (a.ndcY - b.ndcY) * f;
+        const distance = Math.min(22, Math.max(3.4, a.distance + (a.distance - b.distance) * f));
+        return place(ndcX, ndcY, forwardDepth(ndcX, ndcY, distance), target);
+      }
+
       function screenRadius(worldPoint, scale) {
         const dist = camera.position.distanceTo(worldPoint);
         const fov = THREE.MathUtils.degToRad(camera.fov);
@@ -350,6 +616,7 @@
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
         renderer.setSize(width, height, false);
+        rebuildPath();
       }
 
       function createShadowTexture() {
